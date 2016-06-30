@@ -1,5 +1,36 @@
 apply plugin: 'java'
 
+
+ext {
+    bintrayRepo = 'maven'
+    bintrayName = 'concurrent-utils'
+
+    publishedGroupId = 'xiaofei.library'
+    libraryName = 'Concurrent-Utils'
+    artifact = 'concurrent-utils'
+
+    libraryDescription = 'Utilities for Java concurrent library.'
+
+    siteUrl = 'https://github.com/Xiaofei-it/Concurrent-Utils'
+    gitUrl = 'https://github.com/Xiaofei-it/Concurrent-Utils.git'
+
+    libraryVersion = '0.1.0'
+
+    developerId = 'Xiaofei-it'
+    developerName = 'Eric Zhao'
+    developerEmail = 'xiaofei.it@gmail.com'
+
+    licenseName = 'The Apache Software License, Version 2.0'
+    licenseUrl = 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+    allLicenses = ["Apache-2.0"]
+}
+
+targetCompatibility = '1.7'
+sourceCompatibility = '1.7'
+
 dependencies {
     compile fileTree(dir: 'libs', include: ['*.jar'])
 }
+
+apply from: 'https://raw.githubusercontent.com/nuuneoi/JCenter/master/installv1.gradle'
+apply from: 'https://raw.githubusercontent.com/nuuneoi/JCenter/master/bintrayv1.gradle'
