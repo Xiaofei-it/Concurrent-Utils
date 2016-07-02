@@ -130,4 +130,12 @@ public class ObjectCanary<T> {
         lock.unlock();
     }
 
+    public T get() {
+        return object;
+    }
+
+    public T getNonNull() {
+        waitUntilNonNull();
+        return object;
+    }
 }
