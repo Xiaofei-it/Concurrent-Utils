@@ -25,18 +25,14 @@ import java.util.concurrent.locks.ReentrantLock;
 import xiaofei.library.concurrentutils.util.Action;
 import xiaofei.library.concurrentutils.util.Condition;
 import xiaofei.library.concurrentutils.util.Function;
+import xiaofei.library.concurrentutils.util.NonNullCondition;
 
 /**
  * Created by Xiaofei on 16/6/30.
  */
 public class AugmentedListCanary<T> {
 
-    private final Condition<T> nonNullCondition = new Condition<T>() {
-        @Override
-        public boolean satisfy(T o) {
-            return o != null;
-        }
-    };
+    private final Condition<T> nonNullCondition = new NonNullCondition<T>();
 
     private volatile CopyOnWriteArrayList<T> list;
 

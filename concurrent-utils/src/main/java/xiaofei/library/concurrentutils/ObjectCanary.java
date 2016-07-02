@@ -24,18 +24,17 @@ import java.util.concurrent.locks.ReentrantLock;
 import xiaofei.library.concurrentutils.util.Action;
 import xiaofei.library.concurrentutils.util.Condition;
 import xiaofei.library.concurrentutils.util.Function;
+import xiaofei.library.concurrentutils.util.IdenticalFunction;
+import xiaofei.library.concurrentutils.util.NonNullCondition;
 
 /**
  * Created by Xiaofei on 16/6/30.
  */
 public class ObjectCanary<T> {
 
-    private final Condition<T> nonNullCondition = new Condition<T>() {
-        @Override
-        public boolean satisfy(T o) {
-            return o != null;
-        }
-    };
+    private final Condition<T> nonNullCondition = new NonNullCondition<T>();
+
+    private final Function<T, T> identicalFunction = new IdenticalFunction<T>();
 
     private volatile T object;
 
@@ -61,18 +60,14 @@ public class ObjectCanary<T> {
         action(action, null);
     }
 
-    public void action(Action<? super T> action, Condition<? super T> condition) {
-        lock.lock();
-        try {
-            while (condition != null && !condition.satisfy(object)) {
-                this.condition.await();
+    public void action(final Action<? super T> action, Condition<? super T> condition) {
+        performFunctionUnderCondition(new Function<T, Void>() {
+            @Override
+            public Void call(T o) {
+                action.call(o);
+                return null;
             }
-            action.call(object);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        } finally {
-            lock.unlock();
-        }
+        }, condition);
     }
 
     public <R> R calculateNonNull(Function<? super T, ? extends R> function) {
@@ -84,39 +79,18 @@ public class ObjectCanary<T> {
     }
 
     public <R> R calculate(Function<? super T, ? extends R> function, Condition<? super T> condition) {
-        R result = null;
-        lock.lock();
-        try {
-            while (condition != null && !condition.satisfy(object)) {
-                this.condition.await();
-            }
-            result = function.call(object);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        } finally {
-            lock.unlock();
-        }
-        return result;
+        return performFunctionUnderCondition(function, condition);
     }
 
     public void wait(Condition<? super T> condition) {
-        lock.lock();
-        try {
-            while (!condition.satisfy(object)) {
-                this.condition.await();
-            }
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        } finally {
-            lock.unlock();
-        }
+        performFunctionUnderCondition(null, condition);
     }
 
     public void waitUntilNonNull() {
         wait(nonNullCondition);
     }
 
-    public boolean satisfy(Condition<T> condition) {
+    public boolean satisfy(Condition<? super T> condition) {
         lock.lock();
         boolean result = condition.satisfy(object);
         lock.unlock();
@@ -135,7 +109,29 @@ public class ObjectCanary<T> {
     }
 
     public T getNonNull() {
-        waitUntilNonNull();
-        return object;
+        return get(nonNullCondition);
     }
+
+    public T get(Condition<? super T> condition) {
+        return performFunctionUnderCondition(identicalFunction, condition);
+    }
+
+    private <R> R performFunctionUnderCondition( Function<? super T, ? extends R> function, Condition<? super T> condition) {
+        R result = null;
+        lock.lock();
+        try {
+            while (condition != null && !condition.satisfy(object)) {
+                this.condition.await();
+            }
+            if (function != null) {
+                result = function.call(object);
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        } finally {
+            lock.unlock();
+        }
+        return result;
+    }
+
 }
