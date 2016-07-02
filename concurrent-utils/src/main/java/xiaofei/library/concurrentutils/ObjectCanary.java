@@ -42,7 +42,7 @@ public class ObjectCanary<T> {
 
     private final java.util.concurrent.locks.Condition condition;
 
-    public ObjectCanary(T object) {
+    public <R extends T> ObjectCanary(R object) {
         this.object = object;
         lock = new ReentrantLock();
         condition = lock.newCondition();
