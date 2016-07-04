@@ -18,6 +18,10 @@
 
 package xiaofei.library.concurrentutils;
 
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -42,14 +46,69 @@ public class ObjectCanary<T> {
 
     private final java.util.concurrent.locks.Condition condition;
 
+    private final ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>> waitingActions;
+
+    private final ExecutorService executor;
+
     public <R extends T> ObjectCanary(R object) {
         this.object = object;
         lock = new ReentrantLock();
         condition = lock.newCondition();
+        waitingActions = new ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>>();
+        executor = Executors.newCachedThreadPool();
     }
 
     public ObjectCanary() {
         this(null);
+    }
+
+    public void actionNonNullNonBlocking(Action<? super T> action) {
+        actionNonBlocking(action, nonNullCondition);
+    }
+
+    public void actionNonBlocking(final Action<? super T> action, final Condition<? super T> condition) {
+        ConcurrentLinkedQueue<Action<? super T>> queue;
+        if (!waitingActions.containsKey(condition)) {
+            queue = waitingActions.putIfAbsent(condition, new ConcurrentLinkedQueue<Action<? super T>>());
+            if (queue == null) {
+                queue = waitingActions.get(condition);
+                final ConcurrentLinkedQueue<Action<? super T>> finalQueue = queue;
+                executor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            lock.lock();
+                            while (condition != null && !condition.satisfy(object)) {
+                                ObjectCanary.this.condition.await();
+                            }
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        } finally {
+                            lock.unlock();
+                        }
+                        Action<? super T> tmpAction;
+                        while ((tmpAction = finalQueue.peek()) != null) {
+                            tmpAction.call(object);
+                            finalQueue.poll();
+                        }
+                    }
+                });
+            }
+        } else {
+            queue = waitingActions.get(condition);
+        }
+        lock.lock();
+        if (condition.satisfy(object)) {
+            //TODO The following has a little bug.
+            if (queue.isEmpty()) {
+                action.call(object);
+            } else {
+                queue.offer(action);
+            }
+        } else {
+            queue.offer(action);
+        }
+        lock.unlock();
     }
 
     public void actionNonNull(Action<? super T> action) {
@@ -118,8 +177,8 @@ public class ObjectCanary<T> {
 
     private <R> R performFunctionUnderCondition( Function<? super T, ? extends R> function, Condition<? super T> condition) {
         R result = null;
-        lock.lock();
         try {
+            lock.lock();
             while (condition != null && !condition.satisfy(object)) {
                 this.condition.await();
             }
