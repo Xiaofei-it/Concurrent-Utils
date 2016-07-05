@@ -20,54 +20,54 @@ package xiaofei.library.concurrentutils;
 
 import org.junit.Test;
 
-import xiaofei.library.concurrentutils.ObjectCanary;
 import xiaofei.library.concurrentutils.util.Action;
 import xiaofei.library.concurrentutils.util.Condition;
-
-import static org.junit.Assert.assertEquals;
 
 /**
  * Created by Xiaofei on 16/7/5.
  */
-public class ActionNonBlockingTest {
-    class A {
+public class ActionBlockingTest {
+    class B {
         volatile int i;
     }
     @Test
     public void test() throws Exception {
         {
-            Condition<A> condition = new Condition<A>() {
+            final Condition<B> condition = new Condition<B>() {
                 @Override
-                public boolean satisfy(A o) {
+                public boolean satisfy(B o) {
                     return o != null && o.i == 9;
                 }
             };
-            ObjectCanary<A> a = new ObjectCanary<>();
-            for (int i = 0; i < 100; ++i) {
+            final ObjectCanary<B> a = new ObjectCanary<>();
+            for (int i = 0; i < 10; ++i) {
                 final int tmp = i;
-                a.actionNonBlocking(new Action<A>() {
-                    @Override
-                    public void call(A o) {
-//                        try {
-//                            Thread.sleep(1000);
-//                        } catch (InterruptedException e) {
-//                            e.printStackTrace();
-//                        }
-                        System.out.println(tmp);
+                new Thread() {
+                    public void run() {
+                        a.action(new Action<B>() {
+                            @Override
+                            public void call (B o){
+                                try {
+                                    Thread.sleep(1000);
+                                } catch (InterruptedException e) {
+                                    e.printStackTrace();
+                                }
+                                System.out.println(Thread.currentThread().getName() + ":" + tmp);
+                            }
+                        }, condition);
                     }
-                }, condition);
+                }.start();
             }
             System.out.println("start");
-            A tmp = new A();
+            B tmp = new B();
             tmp.i = 9;
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                e.printStackTrace();
-            }
-            System.out.println("set");
             a.set(tmp);
             System.out.println("end");
+        }
+        try {
+            Thread.sleep(15000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
     }
 }

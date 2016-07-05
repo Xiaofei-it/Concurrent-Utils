@@ -22,7 +22,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -47,29 +46,19 @@ public class ObjectCanary<T> {
 
     private final java.util.concurrent.locks.Condition condition;
 
-    private final ConcurrentHashMap<Condition<? super T>, ConcurrentQueue<Action<? super T>>> waitingActions;
+    private final ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>> waitingActions;
 
-    private final ExecutorService executor;
+    private final static ExecutorService EXECUTOR = Executors.newCachedThreadPool();
 
     public <R extends T> ObjectCanary(R object) {
         this.object = object;
         lock = new ReentrantLock();
         condition = lock.newCondition();
-        waitingActions = new ConcurrentHashMap<Condition<? super T>, ConcurrentQueue<Action<? super T>>>();
-        executor = Executors.newCachedThreadPool();
+        waitingActions = new ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>>();
     }
 
     public ObjectCanary() {
         this(null);
-    }
-
-    @Override
-    protected void finalize() throws Throwable {
-        super.finalize();
-        executor.shutdownNow();
-        if (Config.DEBUG) {
-            System.out.println("Finalize " + this);
-        }
     }
 
     public void actionNonNullNonBlocking(Action<? super T> action) {
@@ -80,48 +69,35 @@ public class ObjectCanary<T> {
         if (condition == null) {
             throw new IllegalArgumentException("Condition cannot be null.");
         }
-        ConcurrentQueue<Action<? super T>> queue;
-        if (!waitingActions.containsKey(condition)) {
-            queue = waitingActions.putIfAbsent(condition, new ConcurrentQueue<Action<? super T>>());
-            if (queue == null) {
-                queue = waitingActions.get(condition);
-                final ConcurrentQueue<Action<? super T>> finalQueue = queue;
-                executor.execute(new Runnable() {
+        lock.lock();
+        if (condition.satisfy(object)) {
+            action.call(object);
+        } else {
+            if (!waitingActions.containsKey(condition)) {
+                waitingActions.put(condition, new ConcurrentLinkedQueue<Action<? super T>>());
+                EXECUTOR.execute(new Runnable() {
                     @Override
                     public void run() {
-                        Thread thread = Thread.currentThread();
-                        while (!thread.isInterrupted()) {
-                            try {
-                                lock.lock();
-                                while (!condition.satisfy(object)) {
-                                    ObjectCanary.this.condition.await();
-                                }
-                                Action<? super T> tmpAction;
-                                while ((tmpAction = finalQueue.poll()) != null) {
-                                    tmpAction.call(object);
-                                }
-                            } catch (InterruptedException e) {
-                                e.printStackTrace();
-                            } finally {
-                                lock.unlock();
+                        ConcurrentLinkedQueue<Action<? super T>> q = waitingActions.get(condition);
+                        try {
+                            lock.lock();
+                            while (!condition.satisfy(object)) {
+                                ObjectCanary.this.condition.await();
                             }
-                        }
-                        if (Config.DEBUG) {
-                            System.out.println(Thread.currentThread().getName() + " finishing.");
+                            Action<? super T> tmpAction;
+                            while ((tmpAction = q.poll()) != null) {
+                                tmpAction.call(object);
+                            }
+                            waitingActions.remove(condition);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        } finally {
+                            lock.unlock();
                         }
                     }
                 });
             }
-        } else {
-            queue = waitingActions.get(condition);
-        }
-        lock.lock();
-        if (condition.satisfy(object)) {
-            if (!queue.offerIfNotEmpty(action)) {
-                action.call(object);
-            }
-        } else {
-            queue.offer(action);
+            waitingActions.get(condition).offer(action);
         }
         lock.unlock();
     }
@@ -141,7 +117,7 @@ public class ObjectCanary<T> {
                 action.call(o);
                 return null;
             }
-        }, condition);
+        }, condition, true);
     }
 
     public <R> R calculateNonNull(Function<? super T, ? extends R> function) {
@@ -153,11 +129,11 @@ public class ObjectCanary<T> {
     }
 
     public <R> R calculate(Function<? super T, ? extends R> function, Condition<? super T> condition) {
-        return performFunctionUnderCondition(function, condition);
+        return performFunctionUnderCondition(function, condition, false);
     }
 
     public void wait(Condition<? super T> condition) {
-        performFunctionUnderCondition(null, condition);
+        performFunctionUnderCondition(null, condition, false);
     }
 
     public void waitUntilNonNull() {
@@ -187,18 +163,31 @@ public class ObjectCanary<T> {
     }
 
     public T get(Condition<? super T> condition) {
-        return performFunctionUnderCondition(identicalFunction, condition);
+        return performFunctionUnderCondition(identicalFunction, condition, false);
     }
 
-    private <R> R performFunctionUnderCondition( Function<? super T, ? extends R> function, Condition<? super T> condition) {
+    private <R> R performFunctionUnderCondition( Function<? super T, ? extends R> function, Condition<? super T> condition, boolean signal) {
         R result = null;
         try {
             lock.lock();
             while (condition != null && !condition.satisfy(object)) {
+                if (Config.DEBUG) {
+                    System.out.println(Thread.currentThread().getName() + " before await");
+                }
                 this.condition.await();
+                if (Config.DEBUG) {
+                    System.out.println(Thread.currentThread().getName() + " after await");
+                }
             }
             if (function != null) {
                 result = function.call(object);
+            }
+            if (signal) {
+                if (Config.DEBUG) {
+                    System.out.println(Thread.currentThread().getName() + " signal");
+                }
+                //will signal all, but only one can go on.
+                this.condition.signalAll();
             }
         } catch (InterruptedException e) {
             e.printStackTrace();
@@ -206,12 +195,5 @@ public class ObjectCanary<T> {
             lock.unlock();
         }
         return result;
-    }
-
-    void finish() {
-        long start = System.currentTimeMillis();
-        executor.shutdownNow();
-        long end = System.currentTimeMillis();
-        System.out.println((end - start) / 1000.0);
     }
 }
