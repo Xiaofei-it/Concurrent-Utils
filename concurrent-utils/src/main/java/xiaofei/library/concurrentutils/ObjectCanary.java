@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -46,7 +47,7 @@ public class ObjectCanary<T> {
 
     private final java.util.concurrent.locks.Condition condition;
 
-    private final ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>> waitingActions;
+    private final ConcurrentHashMap<Condition<? super T>, ConcurrentQueue<Action<? super T>>> waitingActions;
 
     private final ExecutorService executor;
 
@@ -54,7 +55,7 @@ public class ObjectCanary<T> {
         this.object = object;
         lock = new ReentrantLock();
         condition = lock.newCondition();
-        waitingActions = new ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>>();
+        waitingActions = new ConcurrentHashMap<Condition<? super T>, ConcurrentQueue<Action<? super T>>>();
         executor = Executors.newCachedThreadPool();
     }
 
@@ -62,34 +63,51 @@ public class ObjectCanary<T> {
         this(null);
     }
 
+    @Override
+    protected void finalize() throws Throwable {
+        super.finalize();
+        executor.shutdownNow();
+        if (Config.DEBUG) {
+            System.out.println("Finalize " + this);
+        }
+    }
+
     public void actionNonNullNonBlocking(Action<? super T> action) {
         actionNonBlocking(action, nonNullCondition);
     }
 
     public void actionNonBlocking(final Action<? super T> action, final Condition<? super T> condition) {
-        ConcurrentLinkedQueue<Action<? super T>> queue;
+        if (condition == null) {
+            throw new IllegalArgumentException("Condition cannot be null.");
+        }
+        ConcurrentQueue<Action<? super T>> queue;
         if (!waitingActions.containsKey(condition)) {
-            queue = waitingActions.putIfAbsent(condition, new ConcurrentLinkedQueue<Action<? super T>>());
+            queue = waitingActions.putIfAbsent(condition, new ConcurrentQueue<Action<? super T>>());
             if (queue == null) {
                 queue = waitingActions.get(condition);
-                final ConcurrentLinkedQueue<Action<? super T>> finalQueue = queue;
+                final ConcurrentQueue<Action<? super T>> finalQueue = queue;
                 executor.execute(new Runnable() {
                     @Override
                     public void run() {
-                        try {
-                            lock.lock();
-                            while (condition != null && !condition.satisfy(object)) {
-                                ObjectCanary.this.condition.await();
+                        Thread thread = Thread.currentThread();
+                        while (!thread.isInterrupted()) {
+                            try {
+                                lock.lock();
+                                while (!condition.satisfy(object)) {
+                                    ObjectCanary.this.condition.await();
+                                }
+                                Action<? super T> tmpAction;
+                                while ((tmpAction = finalQueue.poll()) != null) {
+                                    tmpAction.call(object);
+                                }
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            } finally {
+                                lock.unlock();
                             }
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        } finally {
-                            lock.unlock();
                         }
-                        Action<? super T> tmpAction;
-                        while ((tmpAction = finalQueue.peek()) != null) {
-                            tmpAction.call(object);
-                            finalQueue.poll();
+                        if (Config.DEBUG) {
+                            System.out.println(Thread.currentThread().getName() + " finishing.");
                         }
                     }
                 });
@@ -99,11 +117,8 @@ public class ObjectCanary<T> {
         }
         lock.lock();
         if (condition.satisfy(object)) {
-            //TODO The following has a little bug.
-            if (queue.isEmpty()) {
+            if (!queue.offerIfNotEmpty(action)) {
                 action.call(object);
-            } else {
-                queue.offer(action);
             }
         } else {
             queue.offer(action);
@@ -193,4 +208,10 @@ public class ObjectCanary<T> {
         return result;
     }
 
+    void finish() {
+        long start = System.currentTimeMillis();
+        executor.shutdownNow();
+        long end = System.currentTimeMillis();
+        System.out.println((end - start) / 1000.0);
+    }
 }
