@@ -14,7 +14,7 @@ ext {
     siteUrl = 'https://github.com/Xiaofei-it/Concurrent-Utils'
     gitUrl = 'https://github.com/Xiaofei-it/Concurrent-Utils.git'
 
-    libraryVersion = '0.1.2'
+    libraryVersion = '0.1.3'
 
     developerId = 'Xiaofei-it'
     developerName = 'Eric Zhao'

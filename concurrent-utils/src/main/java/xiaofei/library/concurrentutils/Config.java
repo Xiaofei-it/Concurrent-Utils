@@ -22,5 +22,5 @@ package xiaofei.library.concurrentutils;
  * Created by Xiaofei on 16/7/5.
  */
 class Config {
-    static final boolean DEBUG = true;
+    static final boolean DEBUG = false;
 }
