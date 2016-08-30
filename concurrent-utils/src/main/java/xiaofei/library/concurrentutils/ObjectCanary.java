@@ -48,10 +48,6 @@ public class ObjectCanary<T> {
 
     private final ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>> waitingActions;
 
-    private final Lock waitingActionsLock;
-
-    private final java.util.concurrent.locks.Condition waitingActionsCondition;
-
     private final static ExecutorService EXECUTOR = Executors.newCachedThreadPool();
 
     public <R extends T> ObjectCanary(R object) {
@@ -59,8 +55,6 @@ public class ObjectCanary<T> {
         objectLock = new ReentrantLock();
         objectCondition = objectLock.newCondition();
         waitingActions = new ConcurrentHashMap<Condition<? super T>, ConcurrentLinkedQueue<Action<? super T>>>();
-        waitingActionsLock = new ReentrantLock();
-        waitingActionsCondition = waitingActionsLock.newCondition();
     }
 
     public ObjectCanary() {
@@ -79,7 +73,6 @@ public class ObjectCanary<T> {
         if (condition.satisfy(object)) {
             action.call(object);
         } else {
-            waitingActionsLock.lock();
             if (!waitingActions.containsKey(condition)) {
                 waitingActions.put(condition, new ConcurrentLinkedQueue<Action<? super T>>());
                 EXECUTOR.execute(new Runnable() {
@@ -89,7 +82,6 @@ public class ObjectCanary<T> {
                             // TODO Need I lock the waiting actions every time?
                             // TODO Need I invoke Condition.notifyAll() every time?
                             objectLock.lock();
-                            waitingActionsLock.lock();
                             ConcurrentLinkedQueue<Action<? super T>> q = waitingActions.get(condition);
                             while (!condition.satisfy(object)) {
                                 objectCondition.await();
@@ -99,18 +91,16 @@ public class ObjectCanary<T> {
                                 tmpAction.call(object);
                             }
                             waitingActions.remove(condition);
-                            waitingActionsCondition.notifyAll();
+                            objectCondition.notifyAll();
                         } catch (InterruptedException e) {
                             e.printStackTrace();
                         } finally {
-                            waitingActionsLock.unlock();
                             objectLock.unlock();
                         }
                     }
                 });
             }
             waitingActions.get(condition).offer(action);
-            waitingActionsLock.unlock();
         }
         objectLock.unlock();
     }
@@ -185,15 +175,8 @@ public class ObjectCanary<T> {
             objectLock.lock();
             if (condition != null) {
                 // Let the previous actions be performed first.
-                try {
-                    waitingActionsLock.lock();
-                    while (waitingActions.containsKey(condition)) {
-                        waitingActionsCondition.await();
-                    }
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                } finally {
-                    waitingActionsLock.unlock();
+                while (waitingActions.containsKey(condition)) {
+                    objectCondition.await();
                 }
             }
             while (condition != null && !condition.satisfy(object)) {
