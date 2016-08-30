@@ -91,12 +91,14 @@ public class ObjectCanary<T> {
                                 tmpAction.call(object);
                             }
                             waitingActions.remove(condition);
-                            objectCondition.notifyAll();
                         } catch (InterruptedException e) {
                             e.printStackTrace();
                         } finally {
                             objectLock.unlock();
                         }
+                        objectLock.lock();
+                        objectCondition.notifyAll();
+                        objectLock.unlock();
                     }
                 });
             }

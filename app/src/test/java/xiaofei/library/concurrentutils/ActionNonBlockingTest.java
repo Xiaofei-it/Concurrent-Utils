@@ -68,6 +68,11 @@ public class ActionNonBlockingTest {
             System.out.println("set");
             a.set(tmp);
             System.out.println("end");
+            try {
+                Thread.sleep(100000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
         }
     }
 }
